@@ -1,0 +1,199 @@
+networks:
+  public:
+    driver: bridge
+  private:
+    driver: bridge
+
+services:
+  # Nginx reverse proxy for HTTPS
+  nginx:
+    # build: ./nginx
+    image: mainecoon/openrp:nginx-latest
+    container_name: orp-nginx
+    ports:
+      - "80:80" # HTTP (redirects to HTTPS)
+      - "443:443" # HTTPS
+    volumes:
+      - ./nginx/ssl:/etc/nginx/ssl:ro
+    depends_on:
+      - api
+      - web_ui
+      - warehouse-server
+    networks:
+      - public
+    restart: unless-stopped
+
+  # Warehouse file server - serves uploaded files (profile pictures, etc.)
+  warehouse-server:
+    build: ./warehouse-server
+    image: mainecoon/openrp:warehouse-latest
+    container_name: orp-warehouse
+    volumes:
+      - warehouse_data:/app/warehouse
+    networks:
+      - public
+    restart: unless-stopped
+    healthcheck:
+      test: [ "CMD-SHELL", "wget --quiet --tries=1 --spider http://localhost:8080/uploads/ || exit 1" ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  web_ui:
+    build: ./services/web_ui
+    image: mainecoon/openrp:webui-latest
+    container_name: orp-web-ui
+    env_file: .env
+    environment:
+      - API_URL=http://api:8080
+      - PUBLIC_API_URL=${PUBLIC_API_URL:-}
+      - AUTH_CONFIG_PATH=/app/auth/config.yaml
+    depends_on:
+      - api
+    networks:
+      - public
+    volumes:
+      - ./services/web_ui/app:/app
+      - auth_config:/app/auth
+
+  admin-dashboard:
+    build: ./services/admin_dashboard
+    image: mainecoon/openrp:admin-latest
+    container_name: orp-admin
+    env_file: .env
+    expose:
+      - "5000"
+    environment:
+      - DISPLAY=${DISPLAY}
+      - API_URL=http://api:8080
+      - WEB_UI_CONFIG_PATH=/app/auth/config.yaml
+    depends_on:
+      - api
+    networks:
+      - public
+      - private
+    volumes:
+      - auth_config:/app/auth
+
+  api:
+    build: ./services/api
+    image: mainecoon/openrp:api-latest
+    container_name: orp-api
+    env_file: .env
+    # # Remove direct port exposure - access through nginx
+    # expose:
+    #   - "8080"
+    networks:
+      - public
+      - private
+    environment:
+      - WORKER_URL=http://orp-worker:8081
+      - USE_HTTPS=${USE_HTTPS:-true}
+    depends_on:
+      db:
+        condition: service_healthy
+      worker:
+        condition: service_started
+    volumes:
+      - warehouse_data:/app/warehouse # Shared volume with warehouse-server
+      - ./kb:/app/kb:ro
+      - ./index:/app/index
+      - ./out:/app/out
+    command: [ "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8080" ]
+
+  worker:
+    build: ./services/worker
+    image: mainecoon/openrp:worker-latest
+    container_name: orp-worker
+    env_file: .env
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+    networks:
+      - private
+    expose:
+      - "8081"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  # ollama:
+  #   image: ollama/ollama:latest
+  #   container_name: orp-ollama
+  #   networks:
+  #     - private
+  #   expose:
+  #     - "11434"
+  #   volumes:
+  #     - ollama:/root/.ollama
+  #   deploy:
+  #     resources:
+  #       reservations:
+  #         devices:
+  #           - driver: nvidia
+  #             count: all
+  #             capabilities: [gpu]
+
+  db:
+    image: postgres:15-alpine
+    container_name: orp-db
+    restart: always
+    env_file: .env
+    environment:
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: ${DB_NAME}
+    volumes:
+      # Persistent volume - data survives container recreation
+      # IMPORTANT: Use 'docker-compose down' (NOT 'down -v') to preserve data
+      - postgres_data:/var/lib/postgresql/data
+      # Initial schema (only runs on first database creation when data dir is empty)
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    networks:
+      - private
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U ${DB_USER} -d ${DB_NAME}" ]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+  # db-migrate:
+  #   image: postgres:15-alpine
+  #   depends_on:
+  #     db:
+  #       condition: service_healthy
+  #   env_file: .env
+  #   environment:
+  #     PGPASSWORD: ${DB_PASSWORD}
+  #   volumes:
+  #     - ./migrations:/migrations
+  #   command: >
+  #     sh -c "for i in $$(seq 1 10); do
+  #       psql -h db -U $${DB_USER} -d $${DB_NAME} -f /migrations/userid_models.sql;
+  #     done"
+  #   networks:
+  #     - private
+
+
+
+
+
+volumes:
+  ollama: {}
+  # Persistent PostgreSQL data volume
+  # This volume persists ALL database data (users, chats, messages, etc.) across container recreations
+  # Volume name: <project_name>_postgres_data (e.g., openairp_postgres_data)
+  # To backup: docker run --rm -v openairp_postgres_data:/data -v $(pwd):/backup alpine tar czf /backup/postgres_backup.tar.gz /data
+  # To restore: docker run --rm -v openairp_postgres_data:/data -v $(pwd):/backup alpine sh -c "cd /data && tar xzf /backup/postgres_backup.tar.gz"
+  postgres_data:
+    driver: local
+  # Warehouse storage volume - shared between API and warehouse-server
+  # Stores all uploaded files (profile pictures, etc.)
+  # Volume name: <project_name>_warehouse_data
+  # To backup: docker run --rm -v openairp_warehouse_data:/data -v $(pwd):/backup alpine tar czf /backup/warehouse_backup.tar.gz /data
+  # To restore: docker run --rm -v openairp_warehouse_data:/data -v $(pwd):/backup alpine sh -c "cd /data && tar xzf /backup/warehouse_backup.tar.gz"
+  warehouse_data:
+    driver: local
+  # Auth config volume - shared between web_ui and admin-dashboard
+  # Stores Streamlit Authenticator config file
+  # Volume name: <project_name>_auth_config
+  auth_config:
+    driver: local

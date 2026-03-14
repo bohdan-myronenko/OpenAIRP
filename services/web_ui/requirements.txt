@@ -1,0 +1,5 @@
+streamlit
+requests
+extra-streamlit-components
+streamlit-authenticator
+PyYAML

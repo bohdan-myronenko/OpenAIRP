@@ -1,0 +1,15 @@
+fastapi
+uvicorn[standard]
+pydantic
+python-dotenv
+requests
+httpx
+psycopg2-binary
+sqlalchemy
+alembic
+asyncpg
+bcrypt
+python-multipart
+pillow
+PyJWT
+cryptography

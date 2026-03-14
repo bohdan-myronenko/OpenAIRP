@@ -1,0 +1,13 @@
+# Files
+.env
+docker-push.ps1
+OpenAIRP.7z
+
+# SSL files
+nginx/ssl/*
+
+# IDE files
+cursor/
+.vscode/
+
+scripts/
