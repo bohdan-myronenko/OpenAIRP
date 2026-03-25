@@ -96,6 +96,12 @@ async def _fetch_chat_detail(
                    c.bot_id,
                    c.persona_id,
                    c.user_id,
+                   c.model_id,
+                   c.temperature,
+                   c.max_tokens,
+                   c.top_p,
+                   c.frequency_penalty,
+                   c.presence_penalty,
                    COALESCE(b.name, 'Unknown Bot') AS bot_name,
                    p.name AS persona_name
             FROM chats c
@@ -194,6 +200,12 @@ async def _fetch_chat_detail(
         bot_name=chat_row["bot_name"],
         persona_id=chat_row["persona_id"],
         persona_name=chat_row["persona_name"],
+        model_id=chat_row["model_id"],
+        temperature=chat_row["temperature"],
+        max_tokens=chat_row["max_tokens"],
+        top_p=chat_row["top_p"],
+        frequency_penalty=chat_row["frequency_penalty"],
+        presence_penalty=chat_row["presence_penalty"],
         history=history,
     )
 
@@ -213,7 +225,13 @@ async def list_chats(
                c.last_used,
                c.persona_id,
                p.avatar_url AS persona_avatar_url,
-               (SELECT COUNT(*) FROM messages WHERE chat_id = c.chat_id) AS message_count
+               (SELECT COUNT(*) FROM messages WHERE chat_id = c.chat_id) AS message_count,
+               c.model_id,
+               c.temperature,
+               c.max_tokens,
+               c.top_p,
+               c.frequency_penalty,
+               c.presence_penalty
         FROM chats c
         LEFT JOIN bots b ON b.bot_id = c.bot_id
         LEFT JOIN personas p ON p.persona_id = c.persona_id
@@ -238,6 +256,12 @@ async def list_chats(
             persona_id=row["persona_id"],
             persona_avatar_url=row["persona_avatar_url"],
             message_count=row["message_count"],
+            model_id=row["model_id"],
+            temperature=row["temperature"],
+            max_tokens=row["max_tokens"],
+            top_p=row["top_p"],
+            frequency_penalty=row["frequency_penalty"],
+            presence_penalty=row["presence_penalty"],
         ))
     return result
 
@@ -309,8 +333,9 @@ async def create_chat(
             try:
                 chat_row = await conn.fetchrow(
                     """
-                    INSERT INTO chats (chat_id, user_id, bot_id, persona_id, title, last_used)
-                    VALUES ($1::text, $2, $3, $4, $5, NOW())
+                    INSERT INTO chats (chat_id, user_id, bot_id, persona_id, title, last_used,
+                                       model_id, temperature, max_tokens, top_p, frequency_penalty, presence_penalty)
+                    VALUES ($1::text, $2, $3, $4, $5, NOW(), $6, $7, $8, $9, $10, $11)
                     RETURNING chat_id, title, bot_id
                     """,
                     chat_id,
@@ -318,6 +343,12 @@ async def create_chat(
                     payload.bot_id,
                     payload.persona_id,
                     title,
+                    payload.model_id,
+                    payload.temperature,
+                    payload.max_tokens,
+                    payload.top_p,
+                    payload.frequency_penalty,
+                    payload.presence_penalty,
                 )
                 
                 # Insert greeting message if it exists (as first bot message, non-editable/non-deletable)
@@ -408,7 +439,13 @@ async def admin_list_user_chats(
                c.last_used,
                c.persona_id,
                p.avatar_url AS persona_avatar_url,
-               (SELECT COUNT(*) FROM messages WHERE chat_id = c.chat_id) AS message_count
+               (SELECT COUNT(*) FROM messages WHERE chat_id = c.chat_id) AS message_count,
+               c.model_id,
+               c.temperature,
+               c.max_tokens,
+               c.top_p,
+               c.frequency_penalty,
+               c.presence_penalty
         FROM chats c
         LEFT JOIN bots b ON b.bot_id = c.bot_id
         LEFT JOIN personas p ON p.persona_id = c.persona_id
@@ -433,6 +470,12 @@ async def admin_list_user_chats(
             persona_id=row["persona_id"],
             persona_avatar_url=row["persona_avatar_url"],
             message_count=row["message_count"],
+            model_id=row["model_id"],
+            temperature=row["temperature"],
+            max_tokens=row["max_tokens"],
+            top_p=row["top_p"],
+            frequency_penalty=row["frequency_penalty"],
+            presence_penalty=row["presence_penalty"],
         ))
     return result
 
@@ -503,6 +546,18 @@ async def _generate_bot_reply(
                    c.bot_id,
                    c.persona_id,
                    c.user_id,
+                   c.model_id AS chat_model_id,
+                   c.temperature AS chat_temp,
+                   c.max_tokens AS chat_max_tokens,
+                   c.top_p AS chat_top_p,
+                   c.frequency_penalty AS chat_freq_pen,
+                   c.presence_penalty AS chat_pres_pen,
+                   u.default_model_id AS user_model_id,
+                   u.default_temperature AS user_temp,
+                   u.default_max_tokens AS user_max_tokens,
+                   u.default_top_p AS user_top_p,
+                   u.default_frequency_penalty AS user_freq_pen,
+                   u.default_presence_penalty AS user_pres_pen,
                    b.persona AS bot_persona,
                    COALESCE(b.name, 'Unknown Bot') AS bot_name,
                    p.description AS user_persona,
@@ -510,6 +565,7 @@ async def _generate_bot_reply(
                    b.scenario,
                    b.example_dialog
             FROM chats c
+            JOIN users u ON u.user_id = c.user_id
             LEFT JOIN bots b ON b.bot_id = c.bot_id
             LEFT JOIN personas p ON p.persona_id = c.persona_id
             WHERE c.chat_id = $1::text AND c.user_id = $2::uuid
@@ -570,16 +626,48 @@ async def _generate_bot_reply(
         )
         is_first_message = (message_count == 0)
         
-        # Fetch active model
-        model_row = await conn.fetchrow(
-            """
-            SELECT model_id, name, api_url, api_key, model_name, custom_prompt
-            FROM models
-            WHERE is_active = true
-            ORDER BY updated_at DESC
-            LIMIT 1
-            """
-        )
+        # Priority settings
+        gen_settings = generation_settings or {}
+        final_gen_settings = {}
+        for key, chat_k, user_k in [
+            ("temperature", "chat_temp", "user_temp"),
+            ("max_tokens", "chat_max_tokens", "user_max_tokens"),
+            ("top_p", "chat_top_p", "user_top_p"),
+            ("frequency_penalty", "chat_freq_pen", "user_freq_pen"),
+            ("presence_penalty", "chat_pres_pen", "user_pres_pen")
+        ]:
+            if key in gen_settings and gen_settings[key] is not None:
+                final_gen_settings[key] = gen_settings[key]
+            elif chat_data[chat_k] is not None:
+                final_gen_settings[key] = chat_data[chat_k]
+            elif chat_data[user_k] is not None:
+                final_gen_settings[key] = chat_data[user_k]
+        
+        if not final_gen_settings:
+            final_gen_settings = None
+            
+        # Determine model
+        target_model_id = chat_data["chat_model_id"] or chat_data["user_model_id"]
+        
+        if target_model_id:
+            model_row = await conn.fetchrow(
+                """
+                SELECT model_id, name, api_url, api_key, model_name, custom_prompt
+                FROM models
+                WHERE model_id = $1
+                """,
+                target_model_id
+            )
+        else:
+            model_row = await conn.fetchrow(
+                """
+                SELECT model_id, name, api_url, api_key, model_name, custom_prompt
+                FROM models
+                WHERE is_active = true
+                ORDER BY updated_at DESC
+                LIMIT 1
+                """
+            )
         
         if not model_row:
             raise HTTPException(
@@ -663,7 +751,7 @@ async def _generate_bot_reply(
             "model_name": model_row["model_name"],
             "custom_prompt": custom_prompt,
         },
-        "generation_settings": generation_settings,  # Pass through generation settings if provided
+        "generation_settings": final_gen_settings,  # Pass hierarchically resolved settings
     }
     
     # Call worker service
@@ -874,6 +962,18 @@ async def stream_bot_reply(
                 SELECT c.chat_id,
                        c.persona_id,
                        c.user_id,
+                       c.model_id AS chat_model_id,
+                       c.temperature AS chat_temp,
+                       c.max_tokens AS chat_max_tokens,
+                       c.top_p AS chat_top_p,
+                       c.frequency_penalty AS chat_freq_pen,
+                       c.presence_penalty AS chat_pres_pen,
+                       u.default_model_id AS user_model_id,
+                       u.default_temperature AS user_temp,
+                       u.default_max_tokens AS user_max_tokens,
+                       u.default_top_p AS user_top_p,
+                       u.default_frequency_penalty AS user_freq_pen,
+                       u.default_presence_penalty AS user_pres_pen,
                        b.persona AS bot_persona,
                        COALESCE(b.name, 'Unknown Bot') AS bot_name,
                        p.description AS user_persona,
@@ -881,6 +981,7 @@ async def stream_bot_reply(
                        b.scenario,
                        b.example_dialog
                 FROM chats c
+                JOIN users u ON u.user_id = c.user_id
                 LEFT JOIN bots b ON b.bot_id = c.bot_id
                 LEFT JOIN personas p ON p.persona_id = c.persona_id
                 WHERE c.chat_id = $1::text AND c.user_id = $2::uuid
@@ -940,16 +1041,48 @@ async def stream_bot_reply(
             )
             is_first_message = (message_count == 0)
             
-            # Fetch active model
-            model_row = await conn.fetchrow(
-                """
-                SELECT model_id, name, api_url, api_key, model_name, custom_prompt
-                FROM models
-                WHERE is_active = true
-                ORDER BY updated_at DESC
-                LIMIT 1
-                """
-            )
+            # Priority settings
+            gen_settings = generation_settings or {}
+            final_gen_settings = {}
+            for key, chat_k, user_k in [
+                ("temperature", "chat_temp", "user_temp"),
+                ("max_tokens", "chat_max_tokens", "user_max_tokens"),
+                ("top_p", "chat_top_p", "user_top_p"),
+                ("frequency_penalty", "chat_freq_pen", "user_freq_pen"),
+                ("presence_penalty", "chat_pres_pen", "user_pres_pen")
+            ]:
+                if key in gen_settings and gen_settings[key] is not None:
+                    final_gen_settings[key] = gen_settings[key]
+                elif chat_data[chat_k] is not None:
+                    final_gen_settings[key] = chat_data[chat_k]
+                elif chat_data[user_k] is not None:
+                    final_gen_settings[key] = chat_data[user_k]
+            
+            if not final_gen_settings:
+                final_gen_settings = None
+                
+            # Determine model
+            target_model_id = chat_data["chat_model_id"] or chat_data["user_model_id"]
+            
+            if target_model_id:
+                model_row = await conn.fetchrow(
+                    """
+                    SELECT model_id, name, api_url, api_key, model_name, custom_prompt
+                    FROM models
+                    WHERE model_id = $1
+                    """,
+                    target_model_id
+                )
+            else:
+                model_row = await conn.fetchrow(
+                    """
+                    SELECT model_id, name, api_url, api_key, model_name, custom_prompt
+                    FROM models
+                    WHERE is_active = true
+                    ORDER BY updated_at DESC
+                    LIMIT 1
+                    """
+                )
             
             if not model_row:
                 yield f"data: {json.dumps({'error': 'No active model configured'})}\n\n"
@@ -1007,7 +1140,7 @@ async def stream_bot_reply(
                     "model_name": model_row["model_name"],
                     "custom_prompt": custom_prompt,
                 },
-                "generation_settings": generation_settings,
+                "generation_settings": final_gen_settings,
             }
         
         # Stream from worker service
@@ -1597,6 +1730,7 @@ async def update_message(
                 """,
                 chat_id,
             )
+            
             is_greeting = (first_bot_msg and 
                           first_bot_msg["message_id"] == message_id and 
                           first_bot_msg["sender_type"] == "bot")
@@ -1678,6 +1812,50 @@ async def update_message(
         content=updated_msg["content"],
         created_at=updated_msg["created_at"],
     )
+
+
+from app.schemas import ChatUpdate
+
+@router.put("/{chat_id}", response_model=ChatDetail)
+async def update_chat(
+    chat_id: str,
+    payload: ChatUpdate,
+    current_user: dict = Depends(get_current_user),
+    pool: asyncpg.Pool = Depends(get_pool),
+):
+    """
+    Update a chat's settings (title, persona_id, custom model generation settings).
+    """
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            chat_owner = await conn.fetchval(
+                "SELECT user_id FROM chats WHERE chat_id = $1::text",
+                chat_id
+            )
+            if str(chat_owner) != str(current_user["user_id"]):
+                raise HTTPException(status_code=404, detail="Chat not found")
+                
+            updates = []
+            params = []
+            idx = 1
+            
+            # Process updatable fields
+            update_data = payload.dict(exclude_unset=True)
+            for field in ["title", "persona_id", "model_id", "temperature", "max_tokens", "top_p", "frequency_penalty", "presence_penalty"]:
+                if field in update_data:
+                    val = update_data[field]
+                    updates.append(f"{field} = ${idx}")
+                    params.append(val)
+                    idx += 1
+                    
+            if updates:
+                params.append(chat_id)
+                await conn.execute(
+                    f"UPDATE chats SET {', '.join(updates)} WHERE chat_id = ${idx}::text",
+                    *params
+                )
+                
+    return await _fetch_chat_detail(pool, chat_id, current_user["user_id"])
 
 
 @router.post("/{chat_id}/messages/{message_id}/select-attempt/{attempt_number}", response_model=MessageOut)

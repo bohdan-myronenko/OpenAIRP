@@ -184,14 +184,10 @@ services:
   #     - ./migrations:/migrations
   #   command: >
   #     sh -c "for i in $$(seq 1 10); do
-  #       psql -h db -U $${DB_USER} -d $${DB_NAME} -f /migrations/userid_models.sql;
+  #       psql -h db -U $${DB_USER} -d $${DB_NAME} -f /migrations/model_settings.sql;
   #     done"
   #   networks:
   #     - private
-
-
-
-
 
 volumes:
   ollama: {}

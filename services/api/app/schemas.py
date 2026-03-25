@@ -61,6 +61,22 @@ class ChatCreate(BaseModel):
     bot_id: int
     title: Optional[str] = None
     persona_id: Optional[int] = None
+    model_id: Optional[int] = None
+    temperature: Optional[float] = None
+    max_tokens: Optional[int] = None
+    top_p: Optional[float] = None
+    frequency_penalty: Optional[float] = None
+    presence_penalty: Optional[float] = None
+
+class ChatUpdate(BaseModel):
+    title: Optional[str] = None
+    persona_id: Optional[int] = None
+    model_id: Optional[int] = None
+    temperature: Optional[float] = None
+    max_tokens: Optional[int] = None
+    top_p: Optional[float] = None
+    frequency_penalty: Optional[float] = None
+    presence_penalty: Optional[float] = None
 
 
 class ChatSummary(BaseModel):
@@ -72,6 +88,12 @@ class ChatSummary(BaseModel):
     persona_id: Optional[int] = None
     persona_avatar_url: Optional[str] = None
     message_count: Optional[int] = None
+    model_id: Optional[int] = None
+    temperature: Optional[float] = None
+    max_tokens: Optional[int] = None
+    top_p: Optional[float] = None
+    frequency_penalty: Optional[float] = None
+    presence_penalty: Optional[float] = None
 
 
 class ChatDetail(BaseModel):
@@ -81,6 +103,12 @@ class ChatDetail(BaseModel):
     bot_name: str
     persona_id: Optional[int] = None
     persona_name: Optional[str] = None
+    model_id: Optional[int] = None
+    temperature: Optional[float] = None
+    max_tokens: Optional[int] = None
+    top_p: Optional[float] = None
+    frequency_penalty: Optional[float] = None
+    presence_penalty: Optional[float] = None
     history: List[MessageOut]
 
 

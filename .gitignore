@@ -9,3 +9,4 @@ scripts/
 OpenAIRP.7z
 
 docker-push.ps1
+main.py

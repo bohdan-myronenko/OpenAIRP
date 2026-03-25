@@ -40,6 +40,12 @@ class UserCreate(BaseModel):
 class UserUpdate(BaseModel):
     email: Optional[str] = None
     password: Optional[str] = None
+    default_model_id: Optional[int] = None
+    default_temperature: Optional[float] = None
+    default_max_tokens: Optional[int] = None
+    default_top_p: Optional[float] = None
+    default_frequency_penalty: Optional[float] = None
+    default_presence_penalty: Optional[float] = None
 
 
 class LoginRequest(BaseModel):
@@ -55,6 +61,12 @@ class UserOut(BaseModel):
     password_hash: str  # Display hash only
     is_admin: bool = False
     created_at: datetime
+    default_model_id: Optional[int] = None
+    default_temperature: Optional[float] = None
+    default_max_tokens: Optional[int] = None
+    default_top_p: Optional[float] = None
+    default_frequency_penalty: Optional[float] = None
+    default_presence_penalty: Optional[float] = None
 
 
 @router.get("", response_model=List[UserOut])
@@ -73,7 +85,9 @@ async def list_users(
     try:
         rows = await pool.fetch(
             """
-            SELECT user_id, username, email, password_hash, COALESCE(is_admin, false) as is_admin, created_at
+            SELECT user_id, username, email, password_hash, COALESCE(is_admin, false) as is_admin, created_at,
+                   default_model_id, default_temperature, default_max_tokens, default_top_p,
+                   default_frequency_penalty, default_presence_penalty
             FROM users
             ORDER BY created_at DESC
             """
@@ -87,6 +101,12 @@ async def list_users(
                 password_hash=row["password_hash"],
                 is_admin=row["is_admin"],
                 created_at=row["created_at"],
+                default_model_id=row["default_model_id"],
+                default_temperature=row["default_temperature"],
+                default_max_tokens=row["default_max_tokens"],
+                default_top_p=row["default_top_p"],
+                default_frequency_penalty=row["default_frequency_penalty"],
+                default_presence_penalty=row["default_presence_penalty"],
             )
             for row in rows
         ]
@@ -113,7 +133,9 @@ async def create_user(
                 """
                 INSERT INTO users (username, email, password_hash, is_admin)
                 VALUES ($1, $2, $3, false)
-                RETURNING user_id, username, email, password_hash, COALESCE(is_admin, false) as is_admin, created_at
+                RETURNING user_id, username, email, password_hash, COALESCE(is_admin, false) as is_admin, created_at,
+                          default_model_id, default_temperature, default_max_tokens, default_top_p,
+                          default_frequency_penalty, default_presence_penalty
                 """,
                 user.username,
                 user.email,
@@ -127,6 +149,12 @@ async def create_user(
             password_hash=row["password_hash"],
             is_admin=row["is_admin"],
             created_at=row["created_at"],
+            default_model_id=row["default_model_id"],
+            default_temperature=row["default_temperature"],
+            default_max_tokens=row["default_max_tokens"],
+            default_top_p=row["default_top_p"],
+            default_frequency_penalty=row["default_frequency_penalty"],
+            default_presence_penalty=row["default_presence_penalty"],
         )
     except asyncpg.exceptions.UniqueViolationError:
         raise HTTPException(
@@ -159,7 +187,9 @@ async def login(
         async with pool.acquire() as conn:
             user_row = await conn.fetchrow(
                 """
-                SELECT user_id, username, email, password_hash, COALESCE(is_admin, false) as is_admin, created_at
+                SELECT user_id, username, email, password_hash, COALESCE(is_admin, false) as is_admin, created_at,
+                       default_model_id, default_temperature, default_max_tokens, default_top_p,
+                       default_frequency_penalty, default_presence_penalty
                 FROM users
                 WHERE username = $1
                 """,
@@ -177,7 +207,9 @@ async def login(
                         INSERT INTO users (user_id, username, email, password_hash, is_admin)
                         VALUES ($1, $2, $3, $4, true)
                         ON CONFLICT (username) DO UPDATE SET is_admin = true
-                        RETURNING user_id, username, email, password_hash, is_admin, created_at
+                        RETURNING user_id, username, email, password_hash, is_admin, created_at,
+                                  default_model_id, default_temperature, default_max_tokens, default_top_p,
+                                  default_frequency_penalty, default_presence_penalty
                         """,
                         admin_user_id,
                         ADMIN_USERNAME,
@@ -266,6 +298,12 @@ async def login(
                 password_hash=user_row["password_hash"],
                 is_admin=is_admin,
                 created_at=user_row["created_at"],
+                default_model_id=user_row.get("default_model_id"),
+                default_temperature=user_row.get("default_temperature"),
+                default_max_tokens=user_row.get("default_max_tokens"),
+                default_top_p=user_row.get("default_top_p"),
+                default_frequency_penalty=user_row.get("default_frequency_penalty"),
+                default_presence_penalty=user_row.get("default_presence_penalty"),
             )
     except HTTPException:
         raise
@@ -340,7 +378,9 @@ async def get_current_user_info(
     try:
         row = await pool.fetchrow(
             """
-            SELECT user_id, username, email, password_hash, COALESCE(is_admin, false) as is_admin, created_at
+            SELECT user_id, username, email, password_hash, COALESCE(is_admin, false) as is_admin, created_at,
+                   default_model_id, default_temperature, default_max_tokens, default_top_p,
+                   default_frequency_penalty, default_presence_penalty
             FROM users
             WHERE user_id = $1
             """,
@@ -357,6 +397,12 @@ async def get_current_user_info(
             password_hash=row["password_hash"],
             is_admin=row["is_admin"],
             created_at=row["created_at"],
+            default_model_id=row["default_model_id"],
+            default_temperature=row["default_temperature"],
+            default_max_tokens=row["default_max_tokens"],
+            default_top_p=row["default_top_p"],
+            default_frequency_penalty=row["default_frequency_penalty"],
+            default_presence_penalty=row["default_presence_penalty"],
         )
     except asyncpg.PostgresError as e:
         logger.error(f"PostgreSQL error getting user: {e}", exc_info=True)
@@ -408,6 +454,16 @@ async def update_user(
                     updates.append(f"password_hash = ${param_idx}")
                     params.append(password_hash)
                     param_idx += 1
+
+                for field in [
+                    "default_model_id", "default_temperature", "default_max_tokens",
+                    "default_top_p", "default_frequency_penalty", "default_presence_penalty"
+                ]:
+                    val = getattr(update, field, None)
+                    if val is not None:
+                        updates.append(f"{field} = ${param_idx}")
+                        params.append(val)
+                        param_idx += 1
                 
                 if updates:
                     params.append(user_id)
@@ -416,7 +472,9 @@ async def update_user(
                         UPDATE users
                         SET {', '.join(updates)}
                         WHERE user_id = ${param_idx}
-                        RETURNING user_id, username, email, password_hash, COALESCE(is_admin, false) as is_admin, created_at
+                        RETURNING user_id, username, email, password_hash, COALESCE(is_admin, false) as is_admin, created_at,
+                                  default_model_id, default_temperature, default_max_tokens, default_top_p,
+                                  default_frequency_penalty, default_presence_penalty
                     """
                     
                     row = await conn.fetchrow(query, *params)
@@ -424,7 +482,9 @@ async def update_user(
                     # No updates, just fetch existing
                     row = await conn.fetchrow(
                         """
-                        SELECT user_id, username, email, password_hash, COALESCE(is_admin, false) as is_admin, created_at
+                        SELECT user_id, username, email, password_hash, COALESCE(is_admin, false) as is_admin, created_at,
+                               default_model_id, default_temperature, default_max_tokens, default_top_p,
+                               default_frequency_penalty, default_presence_penalty
                         FROM users
                         WHERE user_id = $1
                         """,
@@ -438,6 +498,12 @@ async def update_user(
             password_hash=row["password_hash"],
             is_admin=row["is_admin"],
             created_at=row["created_at"],
+            default_model_id=row["default_model_id"],
+            default_temperature=row["default_temperature"],
+            default_max_tokens=row["default_max_tokens"],
+            default_top_p=row["default_top_p"],
+            default_frequency_penalty=row["default_frequency_penalty"],
+            default_presence_penalty=row["default_presence_penalty"],
         )
     except asyncpg.exceptions.UniqueViolationError:
         raise HTTPException(
