@@ -414,7 +414,7 @@ async def get_current_user_info(
 
 @router.put("/{user_id}", response_model=UserOut)
 async def update_user(
-    user_id: int,
+    user_id: UUID,
     update: UserUpdate,
     current_user: dict = Depends(get_current_user),
     pool: asyncpg.Pool = Depends(get_pool)
