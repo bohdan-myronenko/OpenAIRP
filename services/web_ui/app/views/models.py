@@ -67,7 +67,30 @@ def show_models():
 
         active_model = next((m for m in models if m.get('is_active')), None)
 
-        if active_model:
+        # Retrieve user defaults if not in session state
+        if "generation_settings" not in st.session_state or not st.session_state.generation_settings:
+            st.session_state.generation_settings = {}
+            me_resp = api_request("GET", "/users/me")
+            if me_resp and me_resp.status_code == 200:
+                user_data = me_resp.json()
+                st.session_state.generation_settings = {
+                    "temperature": user_data.get("default_temperature"),
+                    "max_tokens": user_data.get("default_max_tokens"),
+                    "top_p": user_data.get("default_top_p"),
+                    "frequency_penalty": user_data.get("default_frequency_penalty"),
+                    "presence_penalty": user_data.get("default_presence_penalty"),
+                }
+                # Remove None values so get(..., default) works properly
+                st.session_state.generation_settings = {k: v for k, v in st.session_state.generation_settings.items() if v is not None}
+                
+                if user_data.get("default_model_id"):
+                    st.session_state.selected_model_id = user_data.get("default_model_id")
+        
+        # Determine default model to show in selectbox
+        saved_model_id = st.session_state.get("selected_model_id")
+        if saved_model_id and saved_model_id in model_options.values():
+            default_idx = list(model_options.values()).index(saved_model_id)
+        elif active_model:
             default_idx = list(model_options.values()).index(active_model.get('model_id'))
         else:
             default_idx = 0
@@ -190,7 +213,22 @@ def show_models():
                     "presence_penalty": presence_penalty,
                 }
                 st.session_state.selected_model_id = selected_model_id
-                st.success("Settings saved! These will be used for chat generation.")
+                
+                # Persist settings to user profile
+                me_resp = api_request("GET", "/users/me")
+                if me_resp and me_resp.status_code == 200:
+                    user_id = me_resp.json().get("user_id")
+                    update_payload = {
+                        "default_model_id": selected_model_id,
+                        "default_temperature": temperature,
+                        "default_max_tokens": max_tokens if max_tokens > 0 else None,
+                        "default_top_p": top_p,
+                        "default_frequency_penalty": frequency_penalty,
+                        "default_presence_penalty": presence_penalty,
+                    }
+                    api_request("PUT", f"/users/{user_id}", json=update_payload)
+                
+                st.success("Settings saved! These will be used as your default generation settings.")
 
         if st.button("🔄 Refresh Models List"):
             refresh_models()

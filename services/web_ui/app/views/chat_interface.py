@@ -42,6 +42,7 @@ def show_chat_interface():
                     if response:
                         chat = response.json()
                         st.session_state.current_chat_id = chat['chat_id']
+                        st.session_state.navigate_to_chat = True
                         st.success(f"Chat created! Chat ID: {chat['chat_id']}")
                         refresh_chats()
                         st.rerun()
@@ -55,6 +56,7 @@ def show_chat_interface():
 
                 if st.button("Load Chat"):
                     st.session_state.current_chat_id = chat_options[selected_chat_name]
+                    st.session_state.navigate_to_chat = True
                     refresh_chats()
                     st.rerun()
         else:
@@ -72,23 +74,29 @@ def show_chat_interface():
 
             if st.button("🔄 Start New Chat", use_container_width=True):
                 st.session_state.current_chat_id = None
+                st.session_state._settings_synced_chat_id = None
                 st.rerun()
 
         st.markdown("---")
         st.subheader("⚙️ Current Settings")
         models = load_models()
+        model_id_to_show = st.session_state.get('selected_model_id')
         active_model = next((m for m in models if m.get('is_active')), None)
-        if active_model:
-            model_symbol = "🛡️" if active_model.get('is_admin_model', False) else "💠"
-            st.write(f"**Model:** {model_symbol} {active_model.get('name')}")
+        
+        current_model = next((m for m in models if m.get('model_id') == model_id_to_show), None) if model_id_to_show else active_model
+        
+        if current_model:
+            model_symbol = "🛡️" if current_model.get('is_admin_model', False) else "💠"
+            st.write(f"**Model:** {model_symbol} {current_model.get('name')}")
             st.write(f"**Temperature:** {st.session_state.generation_settings.get('temperature', 0.7)}")
             st.write(f"**Max Tokens:** {st.session_state.generation_settings.get('max_tokens', 'None')}")
         else:
             st.warning("No active model selected!")
 
-        if st.button("⚙️ Change Model & Settings", use_container_width=True):
-            st.session_state.show_settings_modal = True
-            st.rerun()
+        if st.session_state.current_chat_id is not None:
+            if st.button("⚙️ Change Chat Settings", use_container_width=True):
+                st.session_state.show_settings_modal = True
+                st.rerun()
 
     if st.session_state.current_chat_id is None:
         st.info("👈 Select a bot from the sidebar to start a new chat, or load an existing chat.")
@@ -108,6 +116,31 @@ def show_chat_interface():
             chat = response.json()
 
             chat_id = chat['chat_id']
+            
+            # Always sync settings from DB on every load (including refresh)
+            # Only fetch user defaults once per chat load to avoid redundant API calls
+            if st.session_state.get("_settings_synced_chat_id") != chat_id:
+                me_resp = api_request("GET", "/users/me")
+                user_defaults = me_resp.json() if me_resp and me_resp.status_code == 200 else {}
+                
+                st.session_state.generation_settings = {
+                    "temperature": chat.get("temperature") if chat.get("temperature") is not None else user_defaults.get("default_temperature", 0.7),
+                    "max_tokens": chat.get("max_tokens") if chat.get("max_tokens") is not None else user_defaults.get("default_max_tokens"),
+                    "top_p": chat.get("top_p") if chat.get("top_p") is not None else user_defaults.get("default_top_p", 1.0),
+                    "frequency_penalty": chat.get("frequency_penalty") if chat.get("frequency_penalty") is not None else user_defaults.get("default_frequency_penalty", 0.0),
+                    "presence_penalty": chat.get("presence_penalty") if chat.get("presence_penalty") is not None else user_defaults.get("default_presence_penalty", 0.0),
+                }
+                
+                if chat.get("model_id"):
+                    st.session_state.selected_model_id = chat.get("model_id")
+                elif user_defaults.get("default_model_id"):
+                    st.session_state.selected_model_id = user_defaults.get("default_model_id")
+                else:
+                    st.session_state.selected_model_id = None
+                    
+                st.session_state.chat_is_overriding = chat.get("temperature") is not None
+                st.session_state._settings_synced_chat_id = chat_id
+
             if chat_id not in st.session_state.chat_metadata:
                 bot_id = chat.get('bot_id')
                 persona_id = chat.get('persona_id')
@@ -170,6 +203,9 @@ def show_chat_interface():
                         selected_model_id = model_options[selected_model_name]
 
                         st.subheader("Generation Settings")
+                        
+                        override_defaults = st.checkbox("Override User Defaults for this Chat", value=st.session_state.get("chat_is_overriding", False), help="If unchecked, this chat will dynamically track your global user defaults.")
+                        
                         col1, col2 = st.columns(2)
 
                         with col1:
@@ -180,7 +216,8 @@ def show_chat_interface():
                                 value=st.session_state.generation_settings.get("temperature", 0.7),
                                 step=0.1,
                                 help="Controls randomness. Higher = more creative, Lower = more focused",
-                                key="modal_temp"
+                                key="modal_temp",
+                                disabled=not override_defaults
                             )
 
                             max_tokens = st.number_input(
@@ -190,7 +227,8 @@ def show_chat_interface():
                                 value=st.session_state.generation_settings.get("max_tokens") or 500,
                                 step=50,
                                 help="Maximum tokens to generate (None = no limit)",
-                                key="modal_max_tokens"
+                                key="modal_max_tokens",
+                                disabled=not override_defaults
                             )
 
                             top_p = st.slider(
@@ -200,7 +238,8 @@ def show_chat_interface():
                                 value=st.session_state.generation_settings.get("top_p", 1.0),
                                 step=0.1,
                                 help="Controls diversity via nucleus sampling",
-                                key="modal_top_p"
+                                key="modal_top_p",
+                                disabled=not override_defaults
                             )
 
                         with col2:
@@ -211,7 +250,8 @@ def show_chat_interface():
                                 value=st.session_state.generation_settings.get("frequency_penalty", 0.0),
                                 step=0.1,
                                 help="Reduces repetition of frequent tokens",
-                                key="modal_freq_penalty"
+                                key="modal_freq_penalty",
+                                disabled=not override_defaults
                             )
 
                             presence_penalty = st.slider(
@@ -221,7 +261,8 @@ def show_chat_interface():
                                 value=st.session_state.generation_settings.get("presence_penalty", 0.0),
                                 step=0.1,
                                 help="Encourages talking about new topics",
-                                key="modal_pres_penalty"
+                                key="modal_pres_penalty",
+                                disabled=not override_defaults
                             )
 
                         col_save, col_cancel = st.columns(2)
@@ -245,16 +286,43 @@ def show_chat_interface():
                                     # If model not found, still save settings but warn user
                                     st.warning("Model not found, but generation settings will still be saved.")
 
-                                st.session_state.generation_settings = {
-                                    "temperature": temperature,
-                                    "max_tokens": max_tokens if max_tokens > 0 else None,
-                                    "top_p": top_p,
-                                    "frequency_penalty": frequency_penalty,
-                                    "presence_penalty": presence_penalty,
-                                }
+                                if override_defaults:
+                                    st.session_state.generation_settings = {
+                                        "temperature": temperature,
+                                        "max_tokens": max_tokens if max_tokens > 0 else None,
+                                        "top_p": top_p,
+                                        "frequency_penalty": frequency_penalty,
+                                        "presence_penalty": presence_penalty,
+                                    }
+                                    update_payload = {
+                                        "model_id": selected_model_id,
+                                        "temperature": temperature,
+                                        "max_tokens": max_tokens if max_tokens > 0 else None,
+                                        "top_p": top_p,
+                                        "frequency_penalty": frequency_penalty,
+                                        "presence_penalty": presence_penalty,
+                                    }
+                                    st.session_state.chat_is_overriding = True
+                                else:
+                                    # Use {} so the streaming payload doesn't push explicit Null values that would break resolution
+                                    # Wait, we want the UI sliders to keep their current displayed values but gray them out, 
+                                    # so we don't erase generation_settings here, we just use the backend payload to reset DB.
+                                    update_payload = {
+                                        "model_id": None,
+                                        "temperature": None,
+                                        "max_tokens": None,
+                                        "top_p": None,
+                                        "frequency_penalty": None,
+                                        "presence_penalty": None,
+                                    }
+                                    st.session_state.chat_is_overriding = False
+                                    
+                                # Update chat in backend
+                                api_request("PUT", f"/chats/{chat_id}", json=update_payload)
 
+                                st.session_state._settings_synced_chat_id = None
                                 st.session_state.show_settings_modal = False
-                                st.success("Settings updated!")
+                                st.success("Chat settings updated!")
                                 st.rerun()
 
                         with col_cancel:
@@ -655,15 +723,17 @@ def show_chat_interface():
                 st.session_state.cancel_stream = False
 
                 payload = {
-                    "message": user_input,
-                    "generation_settings": {
+                    "message": user_input
+                }
+                
+                if st.session_state.get('chat_is_overriding', False):
+                    payload["generation_settings"] = {
                         "temperature": st.session_state.generation_settings.get("temperature"),
                         "max_tokens": st.session_state.generation_settings.get("max_tokens"),
                         "top_p": st.session_state.generation_settings.get("top_p"),
                         "frequency_penalty": st.session_state.generation_settings.get("frequency_penalty"),
                         "presence_penalty": st.session_state.generation_settings.get("presence_penalty"),
                     }
-                }
 
                 user_avatar = None
                 if chat_id in st.session_state.chat_metadata:

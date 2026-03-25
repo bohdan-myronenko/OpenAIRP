@@ -320,11 +320,8 @@ async def create_model(
                 if column_exists:
                     # New schema with user_id column
                     if model.is_active:
-                        # Only deactivate user's own models, not admin models
-                        await conn.execute(
-                            "UPDATE models SET is_active = false WHERE is_active = true AND user_id = $1",
-                            user_id
-                        )
+                        # Allow multiple active models, so we don't deactivate others anymore.
+                        pass
                     
                     row = await conn.fetchrow(
                         """
@@ -347,9 +344,8 @@ async def create_model(
                     # Old schema without user_id column (backward compatibility)
                     logger.warning("user_id column does not exist in models table, creating model without user_id")
                     if model.is_active:
-                        await conn.execute(
-                            "UPDATE models SET is_active = false WHERE is_active = true"
-                        )
+                        # Allow multiple active models
+                        pass
                     
                     row = await conn.fetchrow(
                         """
@@ -507,13 +503,8 @@ async def update_model(
                             detail="Cannot update models owned by other users"
                         )
                     
-                    # If setting as active, deactivate all others for this user
-                    if update.is_active is True:
-                        await conn.execute(
-                            "UPDATE models SET is_active = false WHERE is_active = true AND model_id != $1 AND user_id = $2",
-                            model_id,
-                            user_id
-                        )
+                    # Allow multiple active models
+                    pass
                 else:
                     # Old schema without user_id - just verify model exists
                     model_row = await conn.fetchrow(
@@ -523,12 +514,8 @@ async def update_model(
                     if not model_row:
                         raise HTTPException(status_code=404, detail="Model not found")
                     
-                    # If setting as active, deactivate all others
-                    if update.is_active is True:
-                        await conn.execute(
-                            "UPDATE models SET is_active = false WHERE is_active = true AND model_id != $1",
-                            model_id
-                        )
+                    # Allow multiple active models
+                    pass
                 
                 # Build update query dynamically
                 updates = []
