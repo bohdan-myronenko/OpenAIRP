@@ -1,24 +1,13 @@
-# services/admin_dashboard/Dockerfile
-
-FROM python:3.10
-
-ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1
+FROM python:3.11-slim
 
 WORKDIR /app
 
-RUN apt-get update && \
-    apt-get install -y python3-tk && \
-    rm -rf /var/lib/apt/lists/*
+# Install dependencies
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
 
-COPY ./requirements.txt .
+# Streamlit port
+EXPOSE 8502
 
-# Install Python dependencies, including PySimpleGUI from its private index
-# requirements.txt should contain "PySimpleGUI" (no version pin is fine)
-RUN python -m pip install --no-cache-dir --extra-index-url https://PySimpleGUI.net/install -r requirements.txt
-
-COPY ./app .
-
-ENV API_URL=http://api:8080
-
-CMD ["python", "main.py"]
+# Run streamlit
+CMD ["streamlit", "run", "main.py", "--server.port=8502", "--server.address=0.0.0.0", "--server.baseUrlPath=/admin/", "--server.headless=true"]

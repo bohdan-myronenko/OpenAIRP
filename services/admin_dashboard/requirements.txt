@@ -1,4 +1,5 @@
-PySimpleGUI-4-foss
+streamlit
+streamlit-authenticator
 requests
-bcrypt
 PyYAML
+bcrypt

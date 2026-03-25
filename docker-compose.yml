@@ -7,7 +7,7 @@ networks:
 services:
   # Nginx reverse proxy for HTTPS
   nginx:
-    # build: ./nginx
+    build: ./nginx
     image: mainecoon/openrp:nginx-latest
     container_name: orp-nginx
     ports:
@@ -16,11 +16,17 @@ services:
     volumes:
       - ./nginx/ssl:/etc/nginx/ssl:ro
     depends_on:
-      - api
-      - web_ui
-      - warehouse-server
+      api:
+        condition: service_healthy
+      web_ui:
+        condition: service_started
+      admin-dashboard:
+        condition: service_started
+      warehouse-server:
+        condition: service_healthy
     networks:
       - public
+      - private
     restart: unless-stopped
 
   # Warehouse file server - serves uploaded files (profile pictures, etc.)
@@ -34,7 +40,7 @@ services:
       - public
     restart: unless-stopped
     healthcheck:
-      test: [ "CMD-SHELL", "wget --quiet --tries=1 --spider http://localhost:8080/uploads/ || exit 1" ]
+      test: [ "CMD-SHELL", "wget --quiet --tries=1 --spider http://localhost:8080/health || exit 1" ]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -47,10 +53,13 @@ services:
     env_file: .env
     environment:
       - API_URL=http://api:8080
+      # PUBLIC_API_URL: Leave empty to use relative URLs (works from any device)
+      # Or set to your server's public URL (e.g., https://yourdomain.com or https://192.168.1.100)
       - PUBLIC_API_URL=${PUBLIC_API_URL:-}
       - AUTH_CONFIG_PATH=/app/auth/config.yaml
     depends_on:
-      - api
+      api:
+        condition: service_healthy
     networks:
       - public
     volumes:
@@ -59,21 +68,22 @@ services:
 
   admin-dashboard:
     build: ./services/admin_dashboard
-    image: mainecoon/openrp:admin-latest
+    # image: mainecoon/openrp:admin-v2-latest
     container_name: orp-admin
     env_file: .env
     expose:
-      - "5000"
+      - "8502"
     environment:
-      - DISPLAY=${DISPLAY}
       - API_URL=http://api:8080
-      - WEB_UI_CONFIG_PATH=/app/auth/config.yaml
+      - AUTH_CONFIG_PATH=/app/auth/config.yaml
     depends_on:
-      - api
+      api:
+        condition: service_healthy
     networks:
       - public
       - private
     volumes:
+      - ./services/admin_dashboard/app:/app
       - auth_config:/app/auth
 
   api:
@@ -87,6 +97,13 @@ services:
     networks:
       - public
       - private
+    restart: unless-stopped
+    healthcheck:
+      test: [ "CMD-SHELL", "python -c 'import urllib.request; urllib.request.urlopen(\"http://localhost:8080/health\")' || exit 1" ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
     environment:
       - WORKER_URL=http://orp-worker:8081
       - USE_HTTPS=${USE_HTTPS:-true}
