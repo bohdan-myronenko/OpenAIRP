@@ -4,6 +4,7 @@ from views.bots import show_bots_manager
 from views.users import show_users_manager
 from views.chat_monitor import show_chat_monitor
 from views.models import show_models
+from views.system_prompts import show_system_prompts_manager
 
 st.set_page_config(page_title="Admin Dashboard V2", page_icon="🛡️", layout="wide")
 
@@ -26,6 +27,7 @@ if authentication_status:
         page = st.sidebar.radio("Navigation", [
             "Bot Management", 
             "User Accounts", 
+            "System Prompts",
             "Chat Monitor",
             "Models"])
         
@@ -36,6 +38,8 @@ if authentication_status:
             show_bots_manager()
         elif page == "User Accounts":
             show_users_manager()
+        elif page == "System Prompts":
+            show_system_prompts_manager()
         elif page == "Chat Monitor":
             show_chat_monitor()
         elif page == "Models":
