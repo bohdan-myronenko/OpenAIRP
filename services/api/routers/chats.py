@@ -756,10 +756,16 @@ async def _generate_bot_reply(
     
     # Call worker service
     try:
+        headers = {}
+        worker_secret = os.getenv("WORKER_SECRET", "")
+        if worker_secret:
+            headers["X-Worker-Token"] = worker_secret
+            
         async with httpx.AsyncClient(timeout=150.0) as client:
             response = await client.post(
                 f"{WORKER_URL}/generate",
                 json=worker_request,
+                headers=headers,
             )
             response.raise_for_status()
             result = response.json()
@@ -1149,11 +1155,17 @@ async def stream_bot_reply(
         cancelled = False
         
         try:
+            headers = {}
+            worker_secret = os.getenv("WORKER_SECRET", "")
+            if worker_secret:
+                headers["X-Worker-Token"] = worker_secret
+                
             async with httpx.AsyncClient(timeout=300.0) as client:
                 async with client.stream(
                     "POST",
                     f"{WORKER_URL}/generate/stream",
                     json=worker_request,
+                    headers=headers,
                 ) as response:
                     if response.status_code != 200:
                         error_text = await response.aread()

@@ -125,7 +125,7 @@ services:
     container_name: orp-worker
     env_file: .env
     environment:
-      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - WORKER_SECRET=${WORKER_SECRET}
     networks:
       - private
     expose:
@@ -164,7 +164,7 @@ services:
       # IMPORTANT: Use 'docker-compose down' (NOT 'down -v') to preserve data
       - postgres_data:/var/lib/postgresql/data
       # Initial schema (only runs on first database creation when data dir is empty)
-      - ./init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+      - ./migrations/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
     networks:
       - private
     healthcheck:

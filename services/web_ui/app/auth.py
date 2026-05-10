@@ -104,77 +104,10 @@ def init_authenticator():
     st.session_state.auth_config_path = config_path
     st.session_state.save_auth_config = save_auth_config
 
-    try:
-        sync_backend_users_to_config(config, config_path)
-        with open(config_path) as file:
-            config = yaml.load(file, Loader=SafeLoader)
-        st.session_state.auth_config = config
-        st.session_state.authenticator = stauth.Authenticate(
-            config['credentials'],
-            config['cookie']['name'],
-            config['cookie']['key'],
-            config['cookie']['expiry_days']
-        )
-    except Exception as e:
-        logger.warning(f"Could not sync backend users to config: {e}")
 
 
-def sync_backend_users_to_config(config: dict, config_path: Path):
-    """Sync users from backend database to streamlit-authenticator config."""
-    try:
-        API_URL = os.getenv("API_URL", "http://localhost:8080").rstrip("/")
-        response = requests.get(f"{API_URL}/users", timeout=5)
 
-        if response.status_code == 200:
-            backend_users = response.json()
-            if isinstance(backend_users, dict) and 'users' in backend_users:
-                backend_users = backend_users['users']
-            elif not isinstance(backend_users, list):
-                backend_users = []
 
-            if 'credentials' not in config:
-                config['credentials'] = {}
-            if 'usernames' not in config['credentials']:
-                config['credentials']['usernames'] = {}
-
-            ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "")
-            ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "")
-
-            config_updated = False
-            for user in backend_users:
-                username = user.get('username')
-                email = user.get('email', '')
-                is_admin = user.get('is_admin', False)
-
-                if username and username not in config['credentials']['usernames']:
-                    if username == ADMIN_USERNAME and ADMIN_PASSWORD:
-                        password = bcrypt.hashpw(ADMIN_PASSWORD.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
-                    else:
-                        password = ''
-
-                    name_parts = username.split('@')[0] if '@' in username else username
-                    first_name = name_parts
-                    last_name = ''
-
-                    config['credentials']['usernames'][username] = {
-                        'email': email or f"{username}@user.local",
-                        'failed_login_attempts': 0,
-                        'first_name': first_name,
-                        'last_name': last_name,
-                        'logged_in': False,
-                        'password': password,
-                        'roles': ['admin'] if is_admin else ['user']
-                    }
-                    config_updated = True
-                    logger.info(f"Synced user {username} from backend to config")
-
-            if config_updated:
-                config_path.parent.mkdir(parents=True, exist_ok=True)
-                with open(config_path, 'w') as file:
-                    yaml.dump(config, file, default_flow_style=False, allow_unicode=True)
-                logger.info("Updated config with users from backend database")
-    except Exception as e:
-        logger.debug(f"Could not sync backend users: {e}")
 
 
 def authenticate_with_backend_api(username: str, password: str) -> bool:

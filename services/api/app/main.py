@@ -8,6 +8,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.staticfiles import StaticFiles
 from pathlib import Path
 import asyncpg
+import os
 
 from app.db import connect, disconnect
 from routers import health, bots, chats, system_prompts, models, personas, users
@@ -22,13 +23,14 @@ app = FastAPI(
     description="HTTP API for bots, chats, and admin tooling.",
 )
 
-# CORS – adjust origins for your needs
+allowed_origins = os.getenv("CORS_ORIGINS", "").split(",")
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[o.strip() for o in allowed_origins if o.strip()] or ["http://localhost"],
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE"],
+    allow_headers=["Content-Type", "Authorization"],
 )
 
 

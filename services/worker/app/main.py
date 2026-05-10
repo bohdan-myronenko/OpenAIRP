@@ -7,11 +7,10 @@ import logging
 import json
 from typing import List, Optional, Dict, Any, AsyncGenerator
 
-from fastapi import FastAPI, HTTPException, status
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi import FastAPI, HTTPException, status, Request, Response
 from pydantic import BaseModel, Field
 import httpx
+import hmac
 from dotenv import load_dotenv
 
 # Load environment variables
@@ -27,14 +26,17 @@ app = FastAPI(
     description="Worker service for LLM generation requests.",
 )
 
-# CORS middleware
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+WORKER_SECRET = os.getenv("WORKER_SECRET", "")
+
+@app.middleware("http")
+async def verify_worker_token(request: Request, call_next):
+    if request.url.path in ("/", "/health"):
+        return await call_next(request)
+    if WORKER_SECRET:
+        token = request.headers.get("X-Worker-Token", "")
+        if not hmac.compare_digest(token, WORKER_SECRET):
+            return Response(status_code=401, content="Unauthorized")
+    return await call_next(request)
 
 
 # Request/Response models

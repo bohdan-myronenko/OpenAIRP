@@ -1,6 +1,7 @@
 import streamlit as st
 from api_client import api_get, api_post, api_delete
 from auth import update_or_delete_user_in_config
+import bcrypt
 
 def fetch_users():
     try:
@@ -53,7 +54,7 @@ def show_users_manager():
                     }
                     try:
                         resp = api_post("/users", payload)
-                        password_hash = resp.get("password_hash")
+                        password_hash = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
                         if password_hash:
                             user_config = {
                                 'email': email,

@@ -1,5 +1,6 @@
 import logging
 import os
+import bcrypt
 
 import streamlit as st
 import streamlit_authenticator as stauth
@@ -7,7 +8,7 @@ import yaml
 from yaml.loader import SafeLoader
 
 from api_client import API_URL
-from auth import authenticate_with_backend_api, check_authentication, sync_backend_users_to_config
+from auth import authenticate_with_backend_api, check_authentication
 from state import get_cookie_manager
 from views.bots import show_bots
 from views.chat_interface import show_chat_interface
@@ -120,20 +121,6 @@ def main():
     if "sync_counter" not in st.session_state:
         st.session_state.sync_counter = 0
     st.session_state.sync_counter += 1
-    if st.session_state.sync_counter % 10 == 0:
-        try:
-            sync_backend_users_to_config(st.session_state.auth_config, st.session_state.auth_config_path)
-            with open(st.session_state.auth_config_path) as file:
-                synced_config = yaml.load(file, Loader=SafeLoader)
-            st.session_state.auth_config = synced_config
-            st.session_state.authenticator = stauth.Authenticate(
-                synced_config['credentials'],
-                synced_config['cookie']['name'],
-                synced_config['cookie']['key'],
-                synced_config['cookie']['expiry_days']
-            )
-        except Exception as sync_err:
-            logger.debug(f"Periodic sync failed: {sync_err}")
 
     if not st.session_state.is_authenticated:
         st.markdown("---")
@@ -168,11 +155,7 @@ def main():
 
                             if response.status_code == 201:
                                 user_data = response.json()
-                                password_hash = user_data.get('password_hash')
-
-                                if not password_hash:
-                                    st.error("Failed to get password hash from backend")
-                                    return
+                                password_hash = bcrypt.hashpw(reg_password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
 
                                 first_name = reg_first_name.strip() if reg_first_name else ''
                                 last_name = reg_last_name.strip() if reg_last_name else ''
