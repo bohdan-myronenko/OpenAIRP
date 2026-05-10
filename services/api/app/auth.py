@@ -1,6 +1,7 @@
 # services/api/app/auth.py
 
 import os
+import hmac
 import logging
 import secrets
 import base64
@@ -246,7 +247,7 @@ async def get_current_user(
     # Check if this is the admin account from .env
     is_admin_from_env = False
     if ADMIN_USERNAME and ADMIN_PASSWORD:
-        if credentials.username == ADMIN_USERNAME and credentials.password == ADMIN_PASSWORD:
+        if credentials.username == ADMIN_USERNAME and hmac.compare_digest(credentials.password, ADMIN_PASSWORD):
             is_admin_from_env = True
     
     async with pool.acquire() as conn:

@@ -1,5 +1,6 @@
 # services/api/app/routers/users.py
 
+import hmac
 import os
 import logging
 from typing import List, Optional
@@ -58,7 +59,6 @@ class UserOut(BaseModel):
     user_id: UUID
     username: str
     email: str
-    password_hash: str  # Display hash only
     is_admin: bool = False
     created_at: datetime
     default_model_id: Optional[int] = None
@@ -85,7 +85,7 @@ async def list_users(
     try:
         rows = await pool.fetch(
             """
-            SELECT user_id, username, email, password_hash, COALESCE(is_admin, false) as is_admin, created_at,
+            SELECT user_id, username, email, COALESCE(is_admin, false) as is_admin, created_at,
                    default_model_id, default_temperature, default_max_tokens, default_top_p,
                    default_frequency_penalty, default_presence_penalty
             FROM users
@@ -98,7 +98,6 @@ async def list_users(
                 user_id=row["user_id"],
                 username=row["username"],
                 email=row["email"],
-                password_hash=row["password_hash"],
                 is_admin=row["is_admin"],
                 created_at=row["created_at"],
                 default_model_id=row["default_model_id"],
@@ -133,7 +132,7 @@ async def create_user(
                 """
                 INSERT INTO users (username, email, password_hash, is_admin)
                 VALUES ($1, $2, $3, false)
-                RETURNING user_id, username, email, password_hash, COALESCE(is_admin, false) as is_admin, created_at,
+                RETURNING user_id, username, email, COALESCE(is_admin, false) as is_admin, created_at,
                           default_model_id, default_temperature, default_max_tokens, default_top_p,
                           default_frequency_penalty, default_presence_penalty
                 """,
@@ -146,7 +145,6 @@ async def create_user(
             user_id=row["user_id"],
             username=row["username"],
             email=row["email"],
-            password_hash=row["password_hash"],
             is_admin=row["is_admin"],
             created_at=row["created_at"],
             default_model_id=row["default_model_id"],
@@ -181,7 +179,7 @@ async def login(
         # Check if this is the admin account from .env
         is_admin_from_env = False
         if ADMIN_USERNAME and ADMIN_PASSWORD:
-            if login_data.username == ADMIN_USERNAME and login_data.password == ADMIN_PASSWORD:
+            if hmac.compare_digest(login_data.username, ADMIN_USERNAME) and hmac.compare_digest(login_data.password, ADMIN_PASSWORD):
                 is_admin_from_env = True
         
         async with pool.acquire() as conn:
@@ -194,7 +192,7 @@ async def login(
                 WHERE username = $1
                 """,
                 login_data.username,
-            )
+            )  # password_hash still fetched for verification, but excluded from response
             
             if not user_row:
                 # If not found in DB but matches admin env, create admin user entry
@@ -207,7 +205,7 @@ async def login(
                         INSERT INTO users (user_id, username, email, password_hash, is_admin)
                         VALUES ($1, $2, $3, $4, true)
                         ON CONFLICT (username) DO UPDATE SET is_admin = true
-                        RETURNING user_id, username, email, password_hash, is_admin, created_at,
+                        RETURNING user_id, username, email, is_admin, created_at,
                                   default_model_id, default_temperature, default_max_tokens, default_top_p,
                                   default_frequency_penalty, default_presence_penalty
                         """,
@@ -270,18 +268,6 @@ async def login(
                 path="/",  # Available to all paths
             )
             
-            # Also set a non-HttpOnly cookie that Cookie Manager can read for Streamlit
-            # This is needed because Streamlit runs server-side and needs to read the token
-            # for persistence across page refreshes
-            response.set_cookie(
-                key=f"{JWT_COOKIE_NAME}_readable",
-                value=jwt_token,
-                max_age=max_age,
-                httponly=False,  # Allow JavaScript/Cookie Manager to read
-                secure=use_https,
-                samesite="strict",
-                path="/",
-            )
             
             # Also create legacy session for backward compatibility (optional, can be removed later)
             # This allows existing sessions to continue working during migration
@@ -295,7 +281,6 @@ async def login(
                 user_id=user_row["user_id"],
                 username=user_row["username"],
                 email=user_row["email"],
-                password_hash=user_row["password_hash"],
                 is_admin=is_admin,
                 created_at=user_row["created_at"],
                 default_model_id=user_row.get("default_model_id"),
@@ -344,6 +329,7 @@ async def logout(
         samesite="strict",
         path="/",
     )
+    # Legacy readable cookie cleanup (removed for XSS safety, but clear any that remain)
     response.delete_cookie(
         key=f"{JWT_COOKIE_NAME}_readable",
         httponly=False,
@@ -378,7 +364,7 @@ async def get_current_user_info(
     try:
         row = await pool.fetchrow(
             """
-            SELECT user_id, username, email, password_hash, COALESCE(is_admin, false) as is_admin, created_at,
+            SELECT user_id, username, email, COALESCE(is_admin, false) as is_admin, created_at,
                    default_model_id, default_temperature, default_max_tokens, default_top_p,
                    default_frequency_penalty, default_presence_penalty
             FROM users
@@ -394,7 +380,6 @@ async def get_current_user_info(
             user_id=row["user_id"],
             username=row["username"],
             email=row["email"],
-            password_hash=row["password_hash"],
             is_admin=row["is_admin"],
             created_at=row["created_at"],
             default_model_id=row["default_model_id"],
@@ -472,7 +457,7 @@ async def update_user(
                         UPDATE users
                         SET {', '.join(updates)}
                         WHERE user_id = ${param_idx}
-                        RETURNING user_id, username, email, password_hash, COALESCE(is_admin, false) as is_admin, created_at,
+                        RETURNING user_id, username, email, COALESCE(is_admin, false) as is_admin, created_at,
                                   default_model_id, default_temperature, default_max_tokens, default_top_p,
                                   default_frequency_penalty, default_presence_penalty
                     """
@@ -482,7 +467,7 @@ async def update_user(
                     # No updates, just fetch existing
                     row = await conn.fetchrow(
                         """
-                        SELECT user_id, username, email, password_hash, COALESCE(is_admin, false) as is_admin, created_at,
+                        SELECT user_id, username, email, COALESCE(is_admin, false) as is_admin, created_at,
                                default_model_id, default_temperature, default_max_tokens, default_top_p,
                                default_frequency_penalty, default_presence_penalty
                         FROM users
@@ -495,7 +480,6 @@ async def update_user(
             user_id=row["user_id"],
             username=row["username"],
             email=row["email"],
-            password_hash=row["password_hash"],
             is_admin=row["is_admin"],
             created_at=row["created_at"],
             default_model_id=row["default_model_id"],

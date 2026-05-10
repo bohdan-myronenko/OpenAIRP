@@ -16,6 +16,15 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+def _mask_api_key(key: str) -> str:
+    """Mask an API key for safe display. Shows first 4 and last 4 chars only."""
+    if not key:
+        return "****"
+    if len(key) <= 8:
+        return "****"
+    return key[:4] + "****" + key[-4:]
+
+
 class ModelBase(BaseModel):
     name: str
     api_url: str
@@ -40,10 +49,17 @@ class ModelUpdate(BaseModel):
     description: Optional[str] = None
 
 
-class ModelOut(ModelBase):
+class ModelOut(BaseModel):
     model_id: int
     user_id: Optional[str] = None  # None for admin-created models
     is_admin_model: bool = False  # True if user_id is None (admin-created)
+    name: str
+    api_url: str
+    api_key_hint: str  # Masked API key for display (first 4 + last 4 chars)
+    model_name: str
+    custom_prompt: Optional[str] = None
+    is_active: bool = False
+    description: Optional[str] = None
     created_at: datetime
     updated_at: datetime
 
@@ -108,7 +124,7 @@ async def list_models(
                 is_admin_model=row.get("user_id") is None,
                 name=row["name"],
                 api_url=row["api_url"],
-                api_key=row["api_key"],
+                api_key_hint=_mask_api_key(row["api_key"]),
                 model_name=row["model_name"],
                 custom_prompt=row["custom_prompt"],
                 is_active=row["is_active"],
@@ -196,7 +212,7 @@ async def get_active_model(
             is_admin_model=row.get("user_id") is None,
             name=row["name"],
             api_url=row["api_url"],
-            api_key=row["api_key"],
+            api_key_hint=_mask_api_key(row["api_key"]),
             model_name=row["model_name"],
             custom_prompt=row["custom_prompt"],
             is_active=row["is_active"],
@@ -262,7 +278,7 @@ async def list_all_models_admin(
                 is_admin_model=row.get("user_id") is None,
                 name=row["name"],
                 api_url=row["api_url"],
-                api_key=row["api_key"],
+                api_key_hint=_mask_api_key(row["api_key"]),
                 model_name=row["model_name"],
                 custom_prompt=row["custom_prompt"],
                 is_active=row["is_active"],
@@ -370,7 +386,7 @@ async def create_model(
             is_admin_model=row["user_id"] is None,
             name=row["name"],
             api_url=row["api_url"],
-            api_key=row["api_key"],
+            api_key_hint=_mask_api_key(row["api_key"]),
             model_name=row["model_name"],
             custom_prompt=row["custom_prompt"],
             is_active=row["is_active"],
@@ -440,7 +456,7 @@ async def get_model(
             is_admin_model=row.get("user_id") is None,
             name=row["name"],
             api_url=row["api_url"],
-            api_key=row["api_key"],
+            api_key_hint=_mask_api_key(row["api_key"]),
             model_name=row["model_name"],
             custom_prompt=row["custom_prompt"],
             is_active=row["is_active"],
@@ -608,7 +624,7 @@ async def update_model(
             is_admin_model=row.get("user_id") is None,
             name=row["name"],
             api_url=row["api_url"],
-            api_key=row["api_key"],
+            api_key_hint=_mask_api_key(row["api_key"]),
             model_name=row["model_name"],
             custom_prompt=row["custom_prompt"],
             is_active=row["is_active"],
